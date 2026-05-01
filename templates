@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>万物 (WeWant) - 多 Agent 调度中枢</title>
+    <!-- 引入 Leaflet 和 Socket.IO -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.1/socket.io.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; background: #1a1a1a; }
+        #map { width: 100vw; height: 100vh; }
+        .header { position: absolute; top: 20px; left: 20px; z-index: 1000; color: white; background: rgba(0,0,0,0.7); padding: 15px 25px; border-radius: 8px; border-left: 4px solid #4CAF50;}
+        .drone-icon { font-size: 24px; transition: transform 0.3s ease; text-align: center;}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2 style="margin: 0; font-weight: 500; letter-spacing: 2px;">万物 WeWant</h2>
+        <p style="margin: 5px 0 0 0; font-size: 12px; color: #aaa;">Sky without boundaries, all things obtainable</p>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        // 初始化地图 (以广州坐标为例)
+        const map = L.map('map', { zoomControl: false }).setView([23.1250, 113.2850], 15);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: 'Map data &copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        const socket = io();
+        const markers = {};
+        const lastPositions = {};
+
+        // 计算两个坐标点之间的偏航角 (Bearing)，解决图标倒置/朝向错误问题
+        function calculateBearing(startLat, startLng, destLat, destLng) {
+            const startLatRad = startLat * Math.PI / 180;
+            const startLngRad = startLng * Math.PI / 180;
+            const destLatRad = destLat * Math.PI / 180;
+            const destLngRad = destLng * Math.PI / 180;
+            const y = Math.sin(destLngRad - startLngRad) * Math.cos(destLatRad);
+            const x = Math.cos(startLatRad) * Math.sin(destLatRad) -
+                      Math.sin(startLatRad) * Math.cos(destLatRad) * Math.cos(destLngRad - startLngRad);
+            let bearing = Math.atan2(y, x) * 180 / Math.PI;
+            return (bearing + 360) % 360;
+        }
+
+        socket.on('telemetry', function(data) {
+            if (data.type === 'FLIGHT_UPDATE') {
+                const lat = data.position[0];
+                const lng = data.position[1];
+                const id = data.drone_id;
+
+                if (!markers[id]) {
+                    // 初始化无人机图标，预留了无文字纯几何 Logo 的接入空间
+                    const icon = L.divIcon({
+                        className: 'custom-icon',
+                        html: `<div class="drone-icon" id="icon-${id}">✈️</div>`,
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15]
+                    });
+                    markers[id] = L.marker([lat, lng], {icon: icon}).addTo(map);
+                } else {
+                    // 更新位置
+                    markers[id].setLatLng([lat, lng]);
+                    
+                    // 动态计算并更新朝向
+                    if (lastPositions[id]) {
+                        const bearing = calculateBearing(lastPositions[id].lat, lastPositions[id].lng, lat, lng);
+                        const iconElement = document.getElementById(`icon-${id}`);
+                        if (iconElement && (lat !== lastPositions[id].lat || lng !== lastPositions[id].lng)) {
+                            // 修正 Leaflet divIcon 默认的旋转偏移
+                            iconElement.style.transform = `rotate(${bearing - 45}deg)`; 
+                        }
+                    }
+                }
+                lastPositions[id] = { lat: lat, lng: lng };
+            }
+        });
+    </script>
+</body>
+</html>
